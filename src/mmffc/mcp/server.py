@@ -13,12 +13,14 @@ JSON-RPC 消息格式，工具通过 ``tools/list`` 发现，
 * 本 Server 与 CLI 共享同一套核心模块
   (mod_manager / file_io_engine)
 
-工具清单（Phase 2）：
+工具清单：
 
 * ``complex_nbt_compiler`` — 自然语言描述 -> FancyMenu
   布局 DSL / FTB Quests 任务树（JSON5 或 SNBT）
 * ``mod_search`` — Modrinth / CurseForge 模组搜索
 * ``mod_install`` — 模组安装（确定性，含备份）
+* ``voxelizer_brain`` — 形状/方块描述 -> 体素 NDJSON
+  （由 CLI ``structure compile`` 落盘为 .nbt / .litematic）
 """
 
 from __future__ import annotations
@@ -395,6 +397,47 @@ def mod_install(
         "skipped": plan.skipped,
         "conflicts": plan.conflicts,
     }
+
+
+# ----------------------------------------------------------------------
+# voxelizer_brain
+# ----------------------------------------------------------------------
+@server.tool(
+    name="voxelizer_brain",
+    title="Voxelizer Brain",
+    description=(
+        "将形状指令/方块列表编译为体素 NDJSON（每行一个方块："
+        '{"x":0,"y":0,"z":0,"block":"minecraft:stone"}）。\n\n'
+        "参数：\n"
+        "- description: 自然语言描述（无 ops/blocks 时生成 5x5 石头"
+        "平台占位，并透传给后续命名使用）\n"
+        "- context: {ops: [...], blocks: [...]}（均可选）\n\n"
+        "ops 按顺序绘制（后者覆盖前者），每个 op 需要 shape 与 block"
+        "（默认 minecraft:stone），可选 properties；shape 参数：\n"
+        "- box / hollow_box: x,y,z,w,h,d（hollow_box 可选 "
+        "thickness，默认 1）\n"
+        "- sphere: cx,cy,cz,r\n"
+        "- hollow_sphere: cx,cy,cz,r,thickness（默认 1）\n"
+        "- cylinder: cx,cy,cz,r,h,axis（默认 y，底面中心沿 +axis 延伸）\n"
+        "- line: from:[x,y,z],to:[x,y,z]\n\n"
+        "blocks 为显式体素数组（同 NDJSON 字段），作为最顶层覆盖。\n\n"
+        "返回：校验后的 NDJSON 字符串。落盘请接 CLI：\n"
+        "cat out.ndjson | mmffc structure compile --format litematic "
+        "-o out.litematic"
+    ),
+)
+@_anticipated_errors
+def voxelizer_brain(
+    description: str,
+    context: dict[str, Any] | None = None,
+) -> str:
+    """Compile shape/block instructions into validated voxel NDJSON."""
+    from mmffc.core.voxels import dumps_ndjson, generate, parse_ndjson
+
+    voxels = generate(description, context)
+    text = dumps_ndjson(voxels)
+    parse_ndjson(text)  # 输出前自校验 roundtrip
+    return text
 
 
 def run(transport: str = "stdio") -> None:

@@ -28,111 +28,88 @@ def _add_option(fn: F, *args: Any, **kwargs: Any) -> F:
 
 
 def common_options(fn: F) -> F:
-    """Attach the global option set to a command (CLI.md 2.2)."""
+    """Attach the global option set to a command (CLI.md 2.2).
+
+    命令自身已声明的选项字符串会遮蔽同名全局选项（例如
+    ``structure compile --format nbt|litematic`` 遮蔽输出格式
+    ``--format``，此时全局输出格式需置于子命令之前给出）。
+    """
+    declared: set[str] = set()
+    for param in getattr(fn, "__click_params__", None) or []:
+        declared.update(getattr(param, "opts", None) or [])
+        declared.update(getattr(param, "secondary_opts", None) or [])
+
     for name in reversed(GLOBAL_OPTIONS):
+        opts: tuple[str, ...]
         if name == "config_file":
-            fn = _add_option(
-                fn,
-                "--config",
-                "config_file",
+            opts = ("--config", "config_file")
+        elif name == "output_format":
+            opts = ("--format", "output_format")
+        elif name == "json_flag":
+            opts = ("--json", "json_flag")
+        elif name == "ndjson_flag":
+            opts = ("--ndjson", "ndjson_flag")
+        elif name == "no_color":
+            opts = ("--no-color", "no_color")
+        elif name == "quiet":
+            opts = ("--quiet", "-q", "quiet")
+        elif name == "verbose":
+            opts = ("--verbose", "-v", "verbose")
+        elif name == "dry_run":
+            opts = ("--dry-run", "dry_run")
+        elif name == "yes":
+            opts = ("--yes", "-y", "yes")
+        elif name == "cwd":
+            opts = ("--cwd", "cwd")
+        elif name == "log_level":
+            opts = ("--log-level", "log_level")
+        else:  # pragma: no cover - GLOBAL_OPTIONS is a closed set
+            continue
+
+        if any(opt in declared for opt in opts if opt.startswith("-")):
+            continue
+
+        kwargs: dict[str, Any]
+        if name == "config_file":
+            kwargs = dict(
                 type=click.Path(exists=True, dir_okay=False),
                 envvar="MMFFC_CONFIG",
                 default=None,
                 help="指定配置文件路径",
             )
         elif name == "output_format":
-            fn = _add_option(
-                fn,
-                "--format",
-                "output_format",
+            kwargs = dict(
                 type=click.Choice([item.value for item in OutputFormat]),
                 default=None,
                 help="输出格式: table|json|ndjson|csv|tsv|raw",
             )
         elif name == "json_flag":
-            fn = _add_option(
-                fn,
-                "--json",
-                "json_flag",
-                is_flag=True,
-                default=None,
-                help="JSON 输出 (等价 --format json)",
-            )
+            kwargs = dict(is_flag=True, default=None, help="JSON 输出 (等价 --format json)")
         elif name == "ndjson_flag":
-            fn = _add_option(
-                fn,
-                "--ndjson",
-                "ndjson_flag",
-                is_flag=True,
-                default=None,
-                help="NDJSON 流式输出 (每行一个 JSON 对象)",
-            )
+            kwargs = dict(is_flag=True, default=None, help="NDJSON 流式输出 (每行一个 JSON 对象)")
         elif name == "no_color":
-            fn = _add_option(
-                fn,
-                "--no-color",
-                "no_color",
-                is_flag=True,
-                default=None,
-                envvar="NO_COLOR",
-                help="禁用彩色输出",
-            )
+            kwargs = dict(is_flag=True, default=None, envvar="NO_COLOR", help="禁用彩色输出")
         elif name == "quiet":
-            fn = _add_option(
-                fn,
-                "--quiet",
-                "-q",
-                "quiet",
-                is_flag=True,
-                default=None,
-                help="仅输出错误",
-            )
+            kwargs = dict(is_flag=True, default=None, help="仅输出错误")
         elif name == "verbose":
-            fn = _add_option(
-                fn,
-                "--verbose",
-                "-v",
-                "verbose",
-                count=True,
-                help="增加 stderr 日志级别 (可重复)",
-            )
+            kwargs = dict(count=True, help="增加 stderr 日志级别 (可重复)")
         elif name == "dry_run":
-            fn = _add_option(
-                fn,
-                "--dry-run",
-                "dry_run",
-                is_flag=True,
-                default=None,
-                help="只打印操作计划，不落盘",
-            )
+            kwargs = dict(is_flag=True, default=None, help="只打印操作计划，不落盘")
         elif name == "yes":
-            fn = _add_option(
-                fn,
-                "--yes",
-                "-y",
-                "yes",
-                is_flag=True,
-                default=None,
-                help="跳过交互确认 (非 TTY 下高风险操作必需)",
-            )
+            kwargs = dict(is_flag=True, default=None, help="跳过交互确认 (非 TTY 下高风险操作必需)")
         elif name == "cwd":
-            fn = _add_option(
-                fn,
-                "--cwd",
-                "cwd",
+            kwargs = dict(
                 type=click.Path(exists=True, file_okay=False),
                 default=None,
                 help="指定工作目录",
             )
-        elif name == "log_level":
-            fn = _add_option(
-                fn,
-                "--log-level",
-                "log_level",
+        else:  # log_level
+            kwargs = dict(
                 type=click.Choice(["debug", "info", "warn", "error"]),
                 default=None,
                 help="日志级别",
             )
+        fn = _add_option(fn, *opts, **kwargs)
     return fn
 
 

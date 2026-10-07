@@ -13,7 +13,7 @@ from mmffc.formats import fancymenu as fm
 from mmffc.formats import ftbquests as fq
 from mmffc.formats import snbt as snbt_module
 from mmffc.mcp import server as mcp_server
-from mmffc.mcp.server import complex_nbt_compiler, mod_search
+from mmffc.mcp.server import complex_nbt_compiler, mod_search, voxelizer_brain
 
 BUTTON = {
     "type": "button",
@@ -148,7 +148,78 @@ def test_registered_tools():
         "complex_nbt_compiler",
         "mod_search",
         "mod_install",
+        "voxelizer_brain",
     }
+
+
+# ----------------------------------------------------------------------
+# voxelizer_brain
+# ----------------------------------------------------------------------
+def test_voxelizer_default_platform():
+    from mmffc.core.voxels import parse_ndjson
+
+    text = voxelizer_brain("")
+    voxels = parse_ndjson(text)
+    assert len(voxels) == 25
+    assert all(v.block == "minecraft:stone" and v.y == 0 for v in voxels)
+
+
+def test_voxelizer_box_ops():
+    from mmffc.core.voxels import parse_ndjson
+
+    text = voxelizer_brain(
+        "wall",
+        {"ops": [{"shape": "box", "block": "stone",
+                  "x": 0, "y": 0, "z": 0, "w": 3, "h": 2, "d": 1}]},
+    )
+    voxels = parse_ndjson(text)
+    assert len(voxels) == 6
+    assert all(v.block == "minecraft:stone" for v in voxels)
+
+
+def test_voxelizer_blocks_override_ops():
+    from mmffc.core.voxels import parse_ndjson
+
+    text = voxelizer_brain(
+        "x",
+        {
+            "ops": [{"shape": "box", "block": "stone",
+                     "x": 0, "y": 0, "z": 0, "w": 2, "h": 1, "d": 1}],
+            "blocks": [{"x": 0, "y": 0, "z": 0, "block": "diamond_block"}],
+        },
+    )
+    voxels = parse_ndjson(text)
+    blocks = {v.coord: v.block for v in voxels}
+    assert blocks[(0, 0, 0)] == "minecraft:diamond_block"
+    assert blocks[(1, 0, 0)] == "minecraft:stone"
+    assert len(voxels) == 2
+
+
+def test_voxelizer_invalid_shape():
+    with pytest.raises(ToolError, match="未知 shape"):
+        voxelizer_brain("x", {"ops": [{"shape": "pyramid"}]})
+
+
+def test_voxelizer_missing_param():
+    with pytest.raises(ToolError, match="缺少参数"):
+        voxelizer_brain("x", {"ops": [{"shape": "box", "block": "stone"}]})
+
+
+def test_voxelizer_output_roundtrips():
+    from mmffc.core.voxels import parse_ndjson
+
+    text = voxelizer_brain(
+        "pillar",
+        {"ops": [{"shape": "cylinder", "block": "obsidian",
+                  "cx": 0, "cy": 0, "cz": 0, "r": 2, "h": 3, "axis": "y"}]},
+    )
+    voxels = parse_ndjson(text)
+    assert len(voxels) == 39  # 底面 13 格 x 高 3
+
+
+def test_voxelizer_tool_signature():
+    sig = inspect.signature(voxelizer_brain)
+    assert list(sig.parameters) == ["description", "context"]
 
 
 # ----------------------------------------------------------------------

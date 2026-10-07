@@ -1,0 +1,20 @@
+{
+  // MMFFC test chapter
+  id: "mmffc_chapter",
+  name: "MMFFC Chapter",
+  description: "A test chapter",
+  icon: "minecraft:book",
+  quests: [
+    {
+      id: "first_quest",
+      name: "First Quest",
+      description: "Get a diamond",
+      icon: "minecraft:diamond",
+      tasks: [
+        {"type": "item", "item": "minecraft:diamond", "count": 1}
+      ],
+      rewards: [],
+      dependencies: []
+    }
+  ]
+}

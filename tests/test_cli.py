@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import responses
 
 from mmffc.cli import main
+
+FIXTURES = Path(__file__).resolve().parent.parent / "tests-data"
 
 
 def test_version(capsys):
@@ -177,17 +180,179 @@ def test_install_dry_run_needs_no_yes(capsys):
     assert data["plans"][0]["install"][0]["slug"] == "sodium"
 
 
-def test_config_phase2_stub(capsys):
+def test_config_validate_valid(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    code = main(
+        [
+            "config",
+            "validate",
+            "fancymenu",
+            str(FIXTURES / "valid_layout.txt"),
+            "--json",
+        ]
+    )
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True
+
+
+def test_config_validate_invalid(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    code = main(
+        [
+            "config",
+            "validate",
+            "fancymenu",
+            str(FIXTURES / "invalid_layout.txt"),
+            "--json",
+        ]
+    )
+    assert code == 3
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is False
+    assert data["errors"]
+
+
+def test_config_validate_parse_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    # pyproject.toml is not a FancyMenu layout
     code = main(
         [
             "config",
             "validate",
             "fancymenu",
             "pyproject.toml",
+            "--json",
+        ]
+    )
+    assert code == 3
+
+
+def test_config_apply_dry_run(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    dest = tmp_path / "cfg"
+    code = main(
+        [
+            "config",
+            "apply",
+            "fancymenu",
+            str(FIXTURES / "valid_layout.txt"),
+            "--dest",
+            str(dest),
+            "--dry-run",
+            "--json",
+        ]
+    )
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["ok"] is True
+    assert not dest.exists()
+
+
+def test_config_apply_requires_yes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    code = main(
+        [
+            "config",
+            "apply",
+            "fancymenu",
+            str(FIXTURES / "valid_layout.txt"),
+            "--dest",
+            str(tmp_path / "cfg"),
+        ]
+    )
+    assert code == 2
+    assert "--yes" in capsys.readouterr().err
+
+
+def test_config_cli_workflow(tmp_path, monkeypatch, capsys):
+    """apply -> get -> set -> diff end to end."""
+    monkeypatch.setenv("MMFFC_HOME", str(tmp_path))
+    fixture = str(FIXTURES / "valid_layout.txt")
+
+    # apply
+    code = main(
+        [
+            "config",
+            "apply",
+            "fancymenu",
+            fixture,
+            "--dest",
+            str(tmp_path / "cfg"),
+            "--yes",
+            "--json",
+        ]
+    )
+    assert code == 0
+    applied = json.loads(capsys.readouterr().out)
+    path = Path(applied["path"])
+    assert path.exists()
+    assert applied["ok"] is True
+
+    # get
+    code = main(
+        [
+            "config",
+            "get",
+            "fancymenu",
+            "sections.1.properties.anchor",
+            "--dest",
+            str(path),
+            "--json",
+        ]
+    )
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == "center"
+
+    # set (creates a backup of the previous version)
+    code = main(
+        [
+            "config",
+            "set",
+            "fancymenu",
+            "sections.1.properties.anchor",
+            "bottom_left",
+            "--dest",
+            str(path),
+            "--yes",
+            "--json",
+        ]
+    )
+    assert code == 0
+    updated = json.loads(capsys.readouterr().out)
+    assert updated["ok"] is True
+    assert updated["backup"]
+
+    # diff (fixture anchor=center, file now bottom_left)
+    code = main(
+        [
+            "config",
+            "diff",
+            "fancymenu",
+            fixture,
+            "--dest",
+            str(path),
+            "--json",
+        ]
+    )
+    assert code == 0
+    diff = json.loads(capsys.readouterr().out)
+    assert diff["same"] is False
+    assert diff["count"] >= 1
+
+    # get on a missing path -> usage error
+    code = main(
+        [
+            "config",
+            "get",
+            "fancymenu",
+            "sections.99",
+            "--dest",
+            str(path),
+            "--json",
         ]
     )
     assert code == 1
-    assert "Phase 2" in capsys.readouterr().err
 
 
 def test_cache_info(capsys):

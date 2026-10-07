@@ -1,0 +1,23 @@
+# Valid FancyMenu layout for testing.
+type = fancymenu_layout
+
+[layout-meta]
+name = Main Menu
+random_mode = false
+
+[element:button:confirm]
+x = 100
+y = 200
+width = 80
+height = 20
+anchor = center
+label = Confirm
+
+[element:text:title]
+x = 0
+y = 0
+width = 200
+height = 20
+anchor = top_center
+text = Welcome to MMFFC
+scale = 2.0

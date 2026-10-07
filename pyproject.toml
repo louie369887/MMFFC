@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 mmffc = "mmffc.cli:main"
+mmffc-mcp = "mmffc.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]

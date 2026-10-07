@@ -234,7 +234,7 @@ def _print_error(exc: MMFFCError) -> None:
 # register command groups (imported after the framework symbols above
 # to keep the import graph acyclic)
 # ----------------------------------------------------------------------
-from mmffc.cli import cache, config, mod, rcon, shell, structure, world  # noqa: E402
+from mmffc.cli import cache, config, mcp, mod, rcon, shell, structure, world  # noqa: E402
 
 cli.add_command(mod.mod)
 cli.add_command(config.config)
@@ -243,6 +243,7 @@ cli.add_command(world.world)
 cli.add_command(rcon.rcon)
 cli.add_command(cache.cache)
 cli.add_command(shell.shell)
+cli.add_command(mcp.mcp)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -258,6 +259,15 @@ def main(argv: list[str] | None = None) -> int:
     except MMFFCError as exc:
         _print_error(exc)
         return int(exc.exit_code)
+    except SystemExit as exc:
+        # Commands may raise SystemExit(n) for contract exit codes.
+        code = exc.code
+        if code is None:
+            return 0
+        if isinstance(code, int):
+            return code
+        click.echo(str(code), err=True)
+        return 1
     except KeyboardInterrupt:
         click.echo("中断", err=True)
         return 130

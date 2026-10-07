@@ -1,0 +1,8 @@
+# Invalid FancyMenu layout: bad anchor + bad x.
+type = fancymenu_layout
+
+[element:button:broken]
+x = not_a_number
+y = 0
+anchor = nowhere
+label = Broken

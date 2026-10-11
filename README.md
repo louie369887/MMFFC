@@ -176,4 +176,12 @@ python -m pytest        # 311 个测试，全绿
 - ✅ **Phase 1**（`v0.1.0-phase1`）：CLI 框架 + 模组管理
 - ✅ **Phase 2**（`v0.2.0-phase2`）：MCP 基础设施 + 安全写入管线 + 格式层 + RCON
 - ✅ **Phase 3**（`v0.3.0-phase3`）：`voxelizer_brain` + 结构生成（`.nbt` / `.litematic`）
-- ⬜ **Phase 4**：`world` 命令组（MCA 编译、世界生成）——当前为占位命令
+- ✅ **Phase 4**（`v0.4.0-phase4`) ：`world` 命令组——Anvil 区域编译（`level.dat` / `session.lock` / `r.X.Z.mca`）、Heightmaps、世界规则引擎与 `world_gen_rule_engine` MCP 工具
+
+> 注意：
+> 
+> 文中”minecraft“游戏著作权由microsoft及mojang AB工作室所有，该项目仅是一个让MCP工具操控并制作minecraft整合包的工具，在遵守EULA的情况下使用；
+> 
+> 该工具由opencode参与开发，请注意辨别。
+> 
+> 该工具遵守MIT协议，仅与Minecraft本体游戏和mod无关的部分

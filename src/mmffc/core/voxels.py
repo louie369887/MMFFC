@@ -485,6 +485,18 @@ def _apply_op(cells: dict, op: Any) -> None:
         )
 
 
+def apply_ops(cells: dict, ops: Any) -> None:
+    """按顺序应用形状 op 列表（后者覆盖前者）。
+
+    ``cells`` 为 ``{(x, y, z): (block, properties)}`` 字典。
+    供世界规则引擎（layers -> ops -> blocks）复用同一套形状语义。
+    """
+    if not isinstance(ops, list):
+        raise SchemaError("ops 必须是数组")
+    for op in ops:
+        _apply_op(cells, op)
+
+
 def generate(description: str, context: dict[str, Any] | None = None) -> list[Voxel]:
     """voxelizer_brain 的确定性生成器。
 

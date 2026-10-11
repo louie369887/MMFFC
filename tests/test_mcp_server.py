@@ -13,7 +13,12 @@ from mmffc.formats import fancymenu as fm
 from mmffc.formats import ftbquests as fq
 from mmffc.formats import snbt as snbt_module
 from mmffc.mcp import server as mcp_server
-from mmffc.mcp.server import complex_nbt_compiler, mod_search, voxelizer_brain
+from mmffc.mcp.server import (
+    complex_nbt_compiler,
+    mod_search,
+    voxelizer_brain,
+    world_gen_rule_engine,
+)
 
 BUTTON = {
     "type": "button",
@@ -149,6 +154,7 @@ def test_registered_tools():
         "mod_search",
         "mod_install",
         "voxelizer_brain",
+        "world_gen_rule_engine",
     }
 
 
@@ -220,6 +226,194 @@ def test_voxelizer_output_roundtrips():
 def test_voxelizer_tool_signature():
     sig = inspect.signature(voxelizer_brain)
     assert list(sig.parameters) == ["description", "context"]
+
+
+# ----------------------------------------------------------------------
+# world_gen_rule_engine
+# ----------------------------------------------------------------------
+def test_rule_engine_default_platform():
+    import json
+
+    from mmffc.core.worldgen import generate_from_rules
+
+    text = anyio.run(world_gen_rule_engine, "")
+    rules = json.loads(text)
+    assert rules["name"] == "mmffc_world"
+    assert rules["area"] == {"x": 0, "z": 0, "w": 16, "d": 16}
+    assert rules["layers"] == [
+        {"from": 0, "to": 0, "block": "minecraft:stone"}
+    ]
+    voxels = generate_from_rules(rules)
+    assert len(voxels) == 256
+    assert all(v.block == "minecraft:stone" and v.y == 0 for v in voxels)
+
+
+def test_rule_engine_layers_and_ops():
+    import json
+
+    from mmffc.core.worldgen import generate_from_rules
+
+    rules = json.loads(
+        anyio.run(
+            world_gen_rule_engine,
+            "castle",
+            {
+                "area": {"x": 0, "z": 0, "w": 4, "d": 4},
+                "layers": [{"from": -60, "to": -60, "block": "stone"}],
+                "ops": [
+                    {"shape": "box", "x": 0, "y": 0, "z": 0,
+                     "w": 2, "h": 1, "d": 2, "block": "cobblestone"}
+                ],
+            },
+        )
+    )
+    assert rules["name"] == "castle"
+    assert [layer["from"] for layer in rules["layers"]] == [-60]
+    voxels = generate_from_rules(rules)
+    by_coord = {v.coord: v.block for v in voxels}
+    assert by_coord[(0, 0, 0)] == "minecraft:cobblestone"
+    assert by_coord[(1, 0, 1)] == "minecraft:cobblestone"
+    assert by_coord[(3, -60, 0)] == "minecraft:stone"
+    assert by_coord[(0, -60, 3)] == "minecraft:stone"
+    assert (3, 0, 0) not in by_coord  # layer 在 y=-60，ops 只覆盖 2x2
+
+
+def test_rule_engine_layers_override_order():
+    import json
+
+    from mmffc.core.worldgen import generate_from_rules
+
+    rules = json.loads(
+        anyio.run(
+            world_gen_rule_engine,
+            "",
+            {
+                "area": {"x": 0, "z": 0, "w": 1, "d": 1},
+                "layers": [
+                    {"from": 0, "to": 0, "block": "dirt"},
+                    {"from": 0, "to": 0, "block": "sand"},
+                ],
+            },
+        )
+    )
+    assert [v.block for v in generate_from_rules(rules)] == [
+        "minecraft:sand"
+    ]
+
+
+def test_rule_engine_blocks_win_over_ops():
+    import json
+
+    from mmffc.core.worldgen import generate_from_rules
+
+    rules = json.loads(
+        anyio.run(
+            world_gen_rule_engine,
+            "",
+            {
+                "ops": [
+                    {"shape": "box", "x": 0, "y": 0, "z": 0,
+                     "w": 1, "h": 1, "d": 1, "block": "stone"}
+                ],
+                "blocks": [
+                    {"x": 0, "y": 0, "z": 0, "block": "diamond_block"}
+                ],
+            },
+        )
+    )
+    assert generate_from_rules(rules)[0].block == "minecraft:diamond_block"
+
+
+def test_rule_engine_unknown_key_rejected():
+    with pytest.raises(ToolError, match="未知字段"):
+        anyio.run(
+            world_gen_rule_engine, "x", {"layers": [], "oops": 1}
+        )
+
+
+def test_rule_engine_layers_require_area():
+    with pytest.raises(ToolError, match="area"):
+        anyio.run(
+            world_gen_rule_engine,
+            "x",
+            {"layers": [{"from": 0, "to": 0, "block": "stone"}]},
+        )
+
+
+def test_rule_engine_air_only_rejected():
+    with pytest.raises(ToolError, match="空气"):
+        anyio.run(
+            world_gen_rule_engine,
+            "x",
+            {"blocks": [{"x": 0, "y": 0, "z": 0, "block": "air"}]},
+        )
+
+
+def test_rule_engine_bad_block_rejected():
+    with pytest.raises(ToolError, match="方块 ID"):
+        anyio.run(
+            world_gen_rule_engine,
+            "x",
+            {"blocks": [{"x": 0, "y": 0, "z": 0, "block": "not a block!"}]},
+        )
+
+
+def test_rule_engine_layer_out_of_y_range():
+    with pytest.raises(ToolError, match="必须落在"):
+        anyio.run(
+            world_gen_rule_engine,
+            "x",
+            {
+                "area": {"x": 0, "z": 0, "w": 1, "d": 1},
+                "layers": [{"from": 400, "to": 401, "block": "stone"}],
+            },
+        )
+
+
+def test_rule_engine_output_is_key_sorted():
+    import json
+
+    text = anyio.run(world_gen_rule_engine, "")
+    assert text == json.dumps(
+        json.loads(text), ensure_ascii=False, indent=2, sort_keys=True
+    )
+
+
+def test_rule_engine_progress_callback():
+    """progress 回调单调递增并在结束时等于总数。"""
+    import json
+
+    from mmffc.core.worldgen import generate_from_rules
+
+    rules = json.loads(anyio.run(world_gen_rule_engine, ""))
+    seen: list[tuple[int, int, str]] = []
+    generate_from_rules(
+        rules, progress=lambda done, total, phase: seen.append((done, total, phase))
+    )
+    assert seen, "进度回调未被调用"
+    dones = [item[0] for item in seen]
+    assert dones == sorted(dones)  # 单调递增
+    assert dones[-1] == seen[-1][1]  # 结束即总数
+    assert {item[2] for item in seen} >= {"ops", "blocks"}
+    assert seen[0][2].startswith("layers[")
+
+
+def test_rule_engine_tool_signature():
+    sig = inspect.signature(world_gen_rule_engine)
+    assert list(sig.parameters) == ["description", "context", "ctx"]
+    assert inspect.iscoroutinefunction(world_gen_rule_engine)
+
+
+def test_rule_engine_context_hidden_from_schema():
+    """ctx 是 SDK 注入参数，不得出现在 inputSchema 中。"""
+    import json
+
+    tools = anyio.run(mcp_server.server.list_tools)
+    tool = next(t for t in tools if t.name == "world_gen_rule_engine")
+    schema = tool.input_schema
+    assert set(schema["properties"]) == {"description", "context"}
+    assert schema["required"] == ["description"]
+    assert "ctx" not in json.dumps(schema)
 
 
 # ----------------------------------------------------------------------

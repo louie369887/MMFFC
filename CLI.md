@@ -54,6 +54,8 @@ mmffc world compile
 
 mmffc rcon exec
 
+mmffc game diagnose
+
 ```
 
 
@@ -151,6 +153,8 @@ CURSEFORGE\_API\_KEY CurseForge API Key
 NO\_COLOR 禁用颜色
 
 MMFFC\_RCON\_PASSWORD RCON 密码
+
+MMFFC\_JAVA / JAVA\_HOME game verify 启动服务端 jar 使用的 JVM 路径
 
 
 
@@ -374,6 +378,59 @@ Unix 风格默认非交互；mmffc shell 提供可选的 DOS 风格交互层，�
 
 
 
+3.8 mmffc game — 崩溃诊断与版本保活（Phase 6）
+
+
+
+非 MCP 部分：只读扫描游戏实例的日志与崩溃报告，输出结构化归因；通过真实（无头）启动验证版本保活性。绝不调用 LLM。
+
+```bash
+
+mmffc game log <DIR> \[--tail N] \[--level info|warn|error|fatal] \[--source latest|debug|history] \[--json]
+
+mmffc game crash <DIR> \[--latest] \[--file FILE] \[--json]
+
+mmffc game diagnose <DIR> \[--json]
+
+mmffc game verify <DIR> \[--loader vanilla|forge|fabric|neoforge] \[--version V] \[--java PATH] \[--timeout 300] \[--keep 10] \[--probe] \[--dry-run] \[--yes] \[--json]
+
+mmffc game list \[--dir DIR] \[--json]
+```
+
+约定：
+
+· \<DIR> 为游戏实例目录（含 logs/ 的目录，即 .minecraft 或 CurseForge/Prism 实例的 .minecraft）；server 实例直接指向 server.jar 所在目录。
+
+· 证据文件位置（确定性路径，不递归猜测）：logs/latest.log、logs/debug.log、logs/\<yyyy-MM-dd\>-\<n>.log.gz（历史运行）、crash-reports/crash-\<yyyy-MM-dd\_HH.MM.SS\>-\<client|server\>.txt、hs\_err\_pid\<PID\>.log（实例根目录，JVM 级）、launcher\_log.txt / launcher\_cef\_log.txt（启动器级）。
+
+· game log 默认解析 logs/latest.log，--source history 扫描 rotating .log.gz；--level 过滤严重级别；输出 \[\] 时间 / 线程 / 级别 / 来源\] 四元组。
+
+· game crash 默认解析最新崩溃报告（--latest 同默认），--file 指定单个；抽取 Description（崩溃类型）、堆栈顶部帧、可疑模组 ID 与模组清单。
+
+· game diagnose 为综合入口：logs + crash-reports + hs_err 三者汇总，输出归因分类（java\_version / port\_bind / mod\_load / mixin / oom / world\_corrupt / launcher / unknown）、每条归因的证据（文件 + 行号 + 原文）与修复建议；未发现错误时 valid 为 true、severity 为 "ok"。
+
+· game verify 用于版本保活：在独立临时 gameDir + 随机空闲端口以 --nogui 启动对应 loader 的服务端 jar，逐行监视 Starting minecraft server version → Loading properties → Starting Minecraft server on \*:PORT → Preparing level → Done preparing level → 存活标志 Done (\<n\>.\<n\>s)! For help, type；命中失败标志（UnsupportedClassVersionError / FAILED TO BIND TO PORT / Could not load / Exception in thread "main"）立即短路，不必等 timeout；到达存活标志后按 --keep N 秒保活观察（--probe 可探测端口），随后优雅停止。
+
+· game verify 判定字段：status（alive|boot\_failed|crashed|timeout）、phase（失败阶段）、attribution（归因分类）、evidence（命中行）、elapsed\_s、command。判定 alive 需同时满足：进程存活、命中存活标志、保活窗口内无二次崩溃、日志尾部无 ERROR/FATAL。
+
+· game verify 退出码：0 = 版本保活；7 = 引导/启动依赖不满足（绝不在用户实例上直接启动；默认 --dry-run 先看执行计划）；2 = 参数错误。保活期间运行的 server 由 --yes 确认后启动，SIGINT（130）时优雅停止子进程。
+
+· game list 列出已知实例目录下的 logs/ 证据情况（供 diagnose 前确认路径）。
+
+示例：
+
+```bash
+
+mmffc game diagnose ./saves/instance/.minecraft --json | jq '.attribution'
+
+mmffc game verify ./server-1.20.1 --loader forge --keep 30 --probe --json | jq '.status'
+
+cat logs/latest.log | rg -i --line-buffered "error|exception" | tail -20   # 用户侧快速手段
+```
+
+
+
+
 4\. 管道组合示例
 
 
@@ -415,6 +472,22 @@ mmffc world init ./saves/test --mc-version 1.20.1 --name "Test"
 cat chunks.ndjson | mmffc world compile --output ./saves/test --region 0,0 --heightmap auto --yes
 
 mmffc world validate ./saves/test --json | jq '.valid'
+
+
+
+# 5. 崩溃诊断 → 归因（Phase 6，只读）
+
+mmffc game diagnose ./instances/.minecraft --json | jq '.attribution'
+
+mmffc game crash ./instances/.minecraft --latest --json | jq -r '.description'
+
+
+
+# 6. 版本保活验证（Phase 6，真实启动 + 守护观察）
+
+mmffc game verify ./server-1.20.1 --loader forge --keep 30 --probe --json | jq '.status'
+
+mmffc game verify ./server-1.20.1 --dry-run --json    # 先看执行计划与启动命令
 
 ```
 
@@ -491,6 +564,12 @@ RCON mcrcon / mcnexus
 ☐ NO\_COLOR=1 或 --no-color 时无 ANSI 转义。
 
 ☐ 非 TTY 下高风险操作未加 --yes 时退出码为 2。
+
+☐ game verify 判定 alive 需同时满足：进程存活、命中 "Done (…)! For help, type" 存活标志、保活窗口内无二次崩溃、日志尾部无 ERROR/FATAL。
+
+☐ game verify 绝不在用户实例上直接启动：独立临时 gameDir + 随机空闲端口，默认 --dry-run 先输出执行计划。
+
+☐ game log / crash / diagnose 为只读操作，不修改实例目录内任何文件。
 
 ☐ mmffc shell 可选，不影响管道自动化。
 

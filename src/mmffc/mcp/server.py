@@ -21,15 +21,26 @@ JSON-RPC 消息格式，工具通过 ``tools/list`` 发现，
 * ``mod_install`` — 模组安装（确定性，含备份）
 * ``voxelizer_brain`` — 形状/方块描述 -> 体素 NDJSON
   （由 CLI ``structure compile`` 落盘为 .nbt / .litematic）
+* ``world_gen_rule_engine`` — 自然语言/上下文 -> 世界生成规则 JSON
+  （由 CLI ``world build`` 落盘为 .mca；长时生成上报进度）
+
+长时操作说明：官方 mcp SDK 2.3.0（协议 2026-07-28）尚未提供
+``io.modelcontextprotocol/tasks`` 能力，因此长时生成采用分阶段
+``ctx.report_progress`` 进度上报 + CLI 侧 ``--max-voxels`` 预算上限
+（分批调用），语义等价于「可中断、可观测」；Tasks 句柄待上游 SDK
+支持后补齐。
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import inspect
 import os
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 
 from mmffc import __version__
@@ -60,7 +71,19 @@ def _anticipated_errors(fn):
     ToolError surfaces the message to the AI client as an
     is_error result; any other exception is treated as a
     crash and the client only sees 'Error executing tool'.
+
+    Supports both sync and async tool bodies.
     """
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except MMFFCError as exc:
+                raise ToolError(exc.message) from exc
+
+        return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -438,6 +461,72 @@ def voxelizer_brain(
     text = dumps_ndjson(voxels)
     parse_ndjson(text)  # 输出前自校验 roundtrip
     return text
+
+
+# ----------------------------------------------------------------------
+# world_gen_rule_engine
+# ----------------------------------------------------------------------
+@server.tool(
+    name="world_gen_rule_engine",
+    title="World Gen Rule Engine",
+    description=(
+        "将自然语言描述/结构化上下文编译为世界生成规则 JSON"
+        "（供 CLI mmffc world build 消费）。\n\n"
+        "规则结构：\n"
+        "- name: 世界名（可选，默认取 description）\n"
+        "- seed: 世界种子（可选，默认 0）\n"
+        "- area: {x, z, w, d} 铺层矩形（layers 必需）\n"
+        "- layers: [{from, to, block, properties?}] 长方体铺层"
+        "（按 from 从低到高依次覆盖）\n"
+        "- ops: 形状指令数组（语义同 voxelizer_brain 的 "
+        "ops：box/hollow_box/sphere/hollow_sphere/cylinder/line）\n"
+        "- blocks: 显式体素数组 [{x,y,z,block,properties?}]\n\n"
+        "执行顺序固定为 layers -> ops -> blocks（后者覆盖前者）。\n\n"
+        "长时生成会分阶段上报进度（progress notifications）；"
+        "超大世界请分批调用并配合 CLI 的 --max-voxels 预算上限。\n\n"
+        "返回：严格校验后的规则 JSON 字符串（键序确定性，可直接 diff）。"
+        "落盘请接 CLI：\n"
+        "mmffc world build --rules rules.json --output ./saves/test "
+        "--yes [--max-voxels 250000]"
+    ),
+)
+@_anticipated_errors
+async def world_gen_rule_engine(
+    description: str,
+    context: dict[str, Any] | None = None,
+    ctx: Context | None = None,
+) -> str:
+    """Compile a description/context into validated world rules JSON."""
+    import json as _json
+
+    from mmffc.core.worldgen import (
+        build_default_rules,
+        generate_from_rules,
+    )
+
+    rules = build_default_rules(description, context)
+
+    pending: list = []
+    if ctx is not None:
+        loop = asyncio.get_running_loop()
+
+        def _report(done: int, total: int, phase: str) -> None:
+            pending.append(
+                loop.create_task(
+                    ctx.report_progress(done, total, message=phase)
+                )
+            )
+    else:
+        _report = None  # type: ignore[assignment]
+
+    voxels = generate_from_rules(rules, progress=_report)
+    if pending:
+        await asyncio.gather(*pending)
+    if ctx is not None:
+        await ctx.report_progress(
+            100, 100, message=f"生成 {len(voxels)} 个体素"
+        )
+    return _json.dumps(rules, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def run(transport: str = "stdio") -> None:

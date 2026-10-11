@@ -14,6 +14,7 @@ MMFFC 采用「确定性底层管道 + AI 模糊逻辑大脑」双核架构：
 - **模组管理**：Modrinth / CurseForge 搜索与安装、依赖解析、本地扫描、原子写入 + 备份
 - **配置校验与写入**：FancyMenu 布局 DSL、FTB Quests（JSON5 / SNBT）、SNBT、JSON5；两阶段校验（结构 + 语义），校验失败退出码 3
 - **结构生成**：体素 NDJSON → `.nbt`（原版结构模板）/ `.litematic`（Litematica 原理图），两格式互转与检查
+- **世界存档生成**：`world init` / `compile` / `build` 生成 1.20.1 Anvil 世界（`level.dat` + `session.lock` + `r.X.Z.mca`），Heightmaps、区域合并、`--max-voxels` 分批预算、完整性校验与检查
 - **游戏内热重载**：Source RCON 客户端（`exec` / `reload` / `watch`）
 - **安全写入**：写前校验、UTC 时间戳备份、原子替换；`--dry-run` 只打印操作计划；非 TTY 高风险操作强制 `--yes`
 
@@ -65,6 +66,51 @@ mmffc structure convert  house.nbt house2.litematic --format litematic --yes
 
 NDJSON 每行一个方块，字段 `x/y/z/block`（命名空间可省略，默认 `minecraft:`）+ 可选 `properties`；重复坐标、未知字段、非整数坐标均为数据错误（退出码 3）。
 
+### 世界存档（Anvil / 1.20.1）
+
+```bash
+# 1. 初始化世界目录（level.dat + session.lock + region/）
+mmffc world init ./saves/test --mc-version 1.20.1 --name "Test" --json
+
+# 2. 体素 NDJSON -> r.0.0.mca（Heightmaps 自动计算）
+cat voxels.ndjson | mmffc world compile --output ./saves/test --yes --json
+
+# 3. 或用规则文件（layers 铺层 -> 形状 ops -> 显式 blocks）
+mmffc world build --rules rules.json --output ./saves/test --yes --json
+
+# 4. 校验与检查
+mmffc world validate ./saves/test --json | jq '.valid'
+mmffc world inspect  ./saves/test --json
+```
+
+管线为 `NDJSON/规则 -> 区块(24 段 Y=-4..19, YZX 位打包) -> r.X.Z.mca`；区块 `DataVersion` 取自目标世界的 `level.dat`，`compile` / `build` 要求目录已 `world init`（否则退出码 2）。重复编译与已有区块合并并自动备份；`--heightmap none` 省略 Heightmaps（游戏加载时重算）；`--max-voxels N` 设定单批预算（超出退出码 3，便于 AI 分批驱动大世界）。
+
+规则文件 schema（由 MCP `world_gen_rule_engine` 产出，未知键 / 类型错误退出码 3）：
+
+```json
+{
+  "name": "test",
+  "seed": 12345,
+  "area": { "x": 0, "z": 0, "w": 16, "d": 16 },
+  "layers": [{ "from": -60, "to": -58, "block": "minecraft:stone" }],
+  "ops": [{ "shape": "sphere", "block": "glass", "cx": 8, "cy": 70, "cz": 8, "r": 3 }],
+  "blocks": [{ "x": 8, "y": 80, "z": 8, "block": "beacon" }]
+}
+```
+
+### 端到端链路（Phase 5 集成测试覆盖）
+
+```bash
+mmffc mod search sodium --loader fabric --mc-version 1.20.1 --json
+mmffc mod install sodium --mc-version 1.20.1 --loader fabric --yes
+ai-agent generate-quests --prompt "..." | mmffc config validate ftbquests -   # MCP 产出内容
+mmffc structure compile --format litematic -o out.litematic --yes              # voxelizer_brain 产出
+mmffc world build --rules rules.json --output ./saves/test --yes --max-voxels 250000
+mmffc world validate ./saves/test --json | jq '.valid'
+```
+
+对应测试 `tests/test_integration_pipeline.py` 以真实代码路径走完整链路（仅网络层打桩）。
+
 ## 命令树
 
 统一入口：`mmffc <noun> <verb> [options] [args]`（类似 `git remote add`）。
@@ -75,7 +121,8 @@ NDJSON 每行一个方块，字段 `x/y/z/block`（命名空间可省略，默�
 | `config` | `validate` `apply` `get` `set` `diff` | 配置校验与写入 |
 | `structure` | `compile` `inspect` `convert` | NDJSON → `.nbt` / `.litematic` |
 | `rcon` | `exec` `reload` `watch` | 游戏内热重载 |
-| `world` | `init` `compile` `build` `validate` `inspect` | 世界存档（Phase 4 占位） |
+| `world` | `init` `compile` `build` `validate` `inspect` | 世界存档（Anvil / level.dat） |
+| `game` | `log` `crash` `diagnose` `verify` `list` | 崩溃诊断与版本保活（Phase 6 规划中，见 prd.md / CLI.md 3.8） |
 | `cache` | `info` `clean` | 缓存管理 |
 | `shell` | — | 交互式 shell（自动化请用管道） |
 | `mcp` | — | 启动 MCP Server（stdio） |
@@ -99,11 +146,12 @@ NDJSON 每行一个方块，字段 `x/y/z/block`（命名空间可省略，默�
 
 ## MCP Server
 
-向 AI 客户端提供 4 个工具（stdio 传输，stdout 仅承载 MCP 协议，日志走 stderr）：
+向 AI 客户端提供 5 个工具（stdio 传输，stdout 仅承载 MCP 协议，日志走 stderr）：
 
 | 工具 | 说明 |
 |---|---|
 | `voxelizer_brain` | 形状（box / sphere / cylinder / line 等）与方块描述 → 体素 NDJSON |
+| `world_gen_rule_engine` | 自然语言 / 上下文 → 世界生成规则 JSON（`world build` 消费；长时生成上报进度） |
 | `complex_nbt_compiler` | FancyMenu 布局 / FTB Quests 章节的编译与校验 |
 | `mod_search` | 搜索 Modrinth / CurseForge |
 | `mod_install` | 下载安装模组（依赖解析、原子落盘） |
@@ -135,6 +183,25 @@ Claude Desktop / Cursor 配置示例：
 
 返回校验后的 NDJSON，接 CLI 落盘：`mmffc structure compile --format litematic -o out.litematic --yes`。
 
+`world_gen_rule_engine` 请求示例（也可只给 `description`，默认产出 16×16 石头平台）：
+
+```json
+{
+  "description": "中心带金字塔的测试世界",
+  "context": {
+    "area": { "x": 0, "z": 0, "w": 8, "d": 8 },
+    "layers": [{ "from": -60, "to": -60, "block": "minecraft:stone" }],
+    "ops": [{ "shape": "hollow_box", "x": 0, "y": 0, "z": 0, "w": 4, "h": 3, "d": 4 }]
+  }
+}
+```
+
+返回严格校验后的规则 JSON，接 CLI：`mmffc world build --rules rules.json --output ./saves/test --yes`。
+
+### 长时操作与进度
+
+官方 MCP SDK 2.3.0（协议 2026-07-28）尚未提供 `io.modelcontextprotocol/tasks` 能力，因此长时世界生成采用等价机制：MCP 侧分阶段上报 progress notifications（`layers` → `ops` → `blocks`），CLI 侧用 `--max-voxels` 预算上限分批驱动。客户端在 `tools/call` 时带 `_meta.progressToken` 即可收到进度。
+
 ## 环境变量
 
 | 变量 | 说明 |
@@ -145,6 +212,7 @@ Claude Desktop / Cursor 配置示例：
 | `MODRINTH_TOKEN` | Modrinth Personal Access Token |
 | `CURSEFORGE_API_KEY` | CurseForge API Key |
 | `MMFFC_RCON_PASSWORD` | RCON 密码 |
+| `MMFFC_JAVA` / `JAVA_HOME` | Phase 6 `game verify` 启动服务端 jar 使用的 JVM 路径 |
 | `NO_COLOR` | 禁用颜色 |
 
 配置优先级：命令行 > 环境变量 > 项目配置 > 用户配置 > 默认值。
@@ -154,21 +222,22 @@ Claude Desktop / Cursor 配置示例：
 ```
 src/mmffc/
 ├── cli/        # 命令树（mod / config / structure / world / rcon / cache / shell / mcp）
-├── core/       # 上下文与全局选项、输出渲染、错误与退出码、体素模型
-├── formats/    # FancyMenu / FTB Quests / SNBT / JSON5 / NBT / structure / litematic
+├── core/       # 上下文与全局选项、输出渲染、错误与退出码、体素模型、世界规则引擎
+├── formats/    # FancyMenu / FTB Quests / SNBT / JSON5 / NBT / structure / litematic / anvil / chunk / level.dat
 ├── io/         # 两阶段校验、原子写入 + 备份
 ├── mods/       # Modrinth / CurseForge 客户端与安装计划
 ├── net/        # Source RCON 客户端
 └── mcp/        # MCP Server（stdio）
-tests/          # pytest 测试套件
+tests/          # pytest 测试套件（含 test_integration_pipeline.py 端到端链路）
 tests-data/     # 测试夹具
 CLI.md          # CLI 权威规范
+prd.md          # 产品需求文档（Phase 6 规划见其中）
 ```
 
 ## 开发
 
 ```bash
-python -m pytest        # 311 个测试，全绿
+python -m pytest        # 442 个测试，全绿
 ```
 
 ## 路线图
@@ -177,6 +246,8 @@ python -m pytest        # 311 个测试，全绿
 - ✅ **Phase 2**（`v0.2.0-phase2`）：MCP 基础设施 + 安全写入管线 + 格式层 + RCON
 - ✅ **Phase 3**（`v0.3.0-phase3`）：`voxelizer_brain` + 结构生成（`.nbt` / `.litematic`）
 - ✅ **Phase 4**（`v0.4.0-phase4`) ：`world` 命令组——Anvil 区域编译（`level.dat` / `session.lock` / `r.X.Z.mca`）、Heightmaps、世界规则引擎与 `world_gen_rule_engine` MCP 工具
+- ✅ **Phase 5**：MCP Tool Schema/描述完善（5 工具全覆盖 + schema 断言）、长时生成进度上报与 `--max-voxels` 预算、端到端集成测试（`tests/test_integration_pipeline.py`）
+- ⬜ **Phase 6**（规划中）：`game` 命令组——读取 MC 版本文件夹日志定位崩溃原因（`game log` / `crash` / `diagnose`）、启动该版本做保活性验证（`game verify`）；规范见 [CLI.md](CLI.md) 3.8 与 prd.md
 
 > 注意：
 > 

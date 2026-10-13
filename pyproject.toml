@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-mmffc = "mmffc.cli:main"
+mmffc = "mmffc.launcher:main"
 mmffc-mcp = "mmffc.mcp.server:main"
 
 [build-system]

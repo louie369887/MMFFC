@@ -111,6 +111,58 @@ mmffc world validate ./saves/test --json | jq '.valid'
 
 对应测试 `tests/test_integration_pipeline.py` 以真实代码路径走完整链路（仅网络层打桩）。
 
+### 统一入口 mmffc.exe（ASCII 立体字 + mmffc> 提示符）
+
+PyInstaller onefile 构建的 `dist/mmffc.exe` 是唯一入口，安装到 PATH 后即可在 cmd 直接使用：
+
+```bat
+mmffc                                  :: 无参数：ASCII 立体字横幅 + mmffc> 交互提示符
+mmffc> world init ./saves/test --mc-version 1.20.1     :: 交互内省略 mmffc 前缀
+mmffc> game diagnose ./instance/.minecraft --json
+mmffc> mcp                             :: 交互内启动 MCP Server（stdio）
+mmffc> exit
+
+mmffc world validate ./saves/test --json        :: 带参：一次性执行（CLI.md 命令去掉前缀）
+mmffc --mcp                                  :: 以 stdio 启动 MCP Server 供 AI 客户端连接
+mmffc --shell                                :: 强制进入交互 shell（管道驱动也可用）
+```
+
+横幅为挤出阴影的 ASCII 立体字（`█` 字面 + `▒` 阴影层）；目标输出流无法编码 Unicode 时自动降级为 `#`/`:` ASCII 字面，stdout 统一重配置为 UTF-8。
+
+### 非模组内容：资源包 / 数据包 / 光影包 / 世界存档（Phase 7）
+
+```bash
+# 资源包 / 光影包 / 数据包 / 整合包（平台能力见 prd.md Phase 7）
+mmffc pack search faithful --type resourcepack --mc-version 1.20.1 --json
+mmffc pack install faithful-32 --type resourcepack --game-dir ./instance --yes --json
+mmffc pack validate ./instance/resourcepacks/faithful --json | jq '.valid'
+mmffc pack list --game-dir ./instance --json
+
+# 数据包装到指定世界的 datapacks/（省略 --world 时退回 resourcepacks/）
+mmffc pack install my-datapack --type datapack --game-dir ./instance --world test --yes
+
+# 世界存档导入（.zip / .mcworld；防 zip-slip，导入前/后校验）
+mmffc world import ./downloads/AdventureMap.zip --saves-dir ./saves --yes --json
+mmffc world validate ./saves/AdventureMap --json
+```
+
+内容类型由「确定性文件存在性」判定：资源包 = `pack.mcmeta` + `assets/`，数据包 = `pack.mcmeta` + `data/`，光影包 = `shaders/program/`（`*.vsh|*.fsh|*.gsh`），世界 = `level.dat` + `region/`。`pack_format` 必须与目标版本兼容（1.20.1 = 15，不兼容退出码 3）。Modrinth 的 `project_type` 支持 `resourcepack/shader/modpack`（`datapack` 走 `all_project_types`），CurseForge 按 classId（12/6552/17/4471/6945）。
+
+## 功能概览
+
+| 能力 | 命令组 | 说明 |
+|---|---|---|
+| 模组管理 | `mod` | Modrinth / CurseForge 搜索、安装（依赖解析）、本地扫描、清单与移除 |
+| 配置校验与写入 | `config` | FancyMenu DSL、FTB Quests（JSON5 / SNBT）两阶段校验 + 原子落盘 |
+| 结构生成 | `structure` | 体素 NDJSON → `.nbt` / `.litematic`，互转与检查 |
+| 世界存档 | `world` | 1.20.1 Anvil 生成（`level.dat` / `session.lock` / `r.X.Z.mca`）、Heightmaps、区域合并、完整性校验、`.zip`/`.mcworld` 导入 |
+| 非模组内容 | `pack` | 资源包 / 数据包 / 光影包 / 整合包的搜索安装与 `pack_format` 校验 |
+| 崩溃诊断 | `game` | `latest.log` / 崩溃报告 / `hs_err` 解析与归因；真实启动验证版本保活 |
+| 游戏内热重载 | `rcon` | Source RCON `exec` / `reload` / `watch` |
+| AI 工具面 | `mmffc-mcp` | 5 个 MCP 工具：`complex_nbt_compiler` / `voxelizer_brain` / `world_gen_rule_engine` / `mod_search` / `mod_install` |
+
+设计红线（CLI.md）：CLI 永不调用 LLM；AI 产出经 stdin/文件交给 CLI 校验后落盘；所有写入原子 + 备份 + `--dry-run` + `--yes`。
+
 ## 命令树
 
 统一入口：`mmffc <noun> <verb> [options] [args]`（类似 `git remote add`）。
@@ -121,8 +173,9 @@ mmffc world validate ./saves/test --json | jq '.valid'
 | `config` | `validate` `apply` `get` `set` `diff` | 配置校验与写入 |
 | `structure` | `compile` `inspect` `convert` | NDJSON → `.nbt` / `.litematic` |
 | `rcon` | `exec` `reload` `watch` | 游戏内热重载 |
-| `world` | `init` `compile` `build` `validate` `inspect` | 世界存档（Anvil / level.dat） |
-| `game` | `log` `crash` `diagnose` `verify` `list` | 崩溃诊断与版本保活（Phase 6 规划中，见 prd.md / CLI.md 3.8） |
+| `world` | `init` `compile` `build` `validate` `inspect` `import` | 世界存档（Anvil / level.dat） |
+| `game` | `log` `crash` `diagnose` `verify` `list` | 崩溃诊断与版本保活（Phase 6） |
+| `pack` | `search` `install` `list` `validate` | 资源包 / 数据包 / 光影包 / 整合包（Phase 7） |
 | `cache` | `info` `clean` | 缓存管理 |
 | `shell` | — | 交互式 shell（自动化请用管道） |
 | `mcp` | — | 启动 MCP Server（stdio） |
@@ -221,9 +274,11 @@ Claude Desktop / Cursor 配置示例：
 
 ```
 src/mmffc/
-├── cli/        # 命令树（mod / config / structure / world / rcon / cache / shell / mcp）
+├── cli/        # 命令树（mod / config / structure / world / pack / game / rcon / cache / shell / mcp）
 ├── core/       # 上下文与全局选项、输出渲染、错误与退出码、体素模型、世界规则引擎
 ├── formats/    # FancyMenu / FTB Quests / SNBT / JSON5 / NBT / structure / litematic / anvil / chunk / level.dat
+├── game/       # 日志解析、崩溃报告、归因分类、版本保活验证（Phase 6）
+├── packs/      # pack.mcmeta、资源/数据/光影包识别、安全解包与世界导入（Phase 7）
 ├── io/         # 两阶段校验、原子写入 + 备份
 ├── mods/       # Modrinth / CurseForge 客户端与安装计划
 ├── net/        # Source RCON 客户端
@@ -237,7 +292,15 @@ prd.md          # 产品需求文档（Phase 6 规划见其中）
 ## 开发
 
 ```bash
-python -m pytest        # 442 个测试，全绿
+python -m pytest        # 561 个测试，全绿
+
+# 构建统一入口 exe（PyInstaller onefile，产物 dist/mmffc.exe）
+python -m PyInstaller --onefile --console --name mmffc --distpath dist \
+  --workpath build/pyi --specpath build --paths src \
+  --collect-submodules mmffc --collect-submodules mcp.server \
+  --collect-all pydantic --collect-all pydantic_core \
+  --collect-all jsonschema --exclude-module mcp.cli \
+  src/mmffc/launcher.py
 ```
 
 ## 路线图
@@ -247,7 +310,8 @@ python -m pytest        # 442 个测试，全绿
 - ✅ **Phase 3**（`v0.3.0-phase3`）：`voxelizer_brain` + 结构生成（`.nbt` / `.litematic`）
 - ✅ **Phase 4**（`v0.4.0-phase4`) ：`world` 命令组——Anvil 区域编译（`level.dat` / `session.lock` / `r.X.Z.mca`）、Heightmaps、世界规则引擎与 `world_gen_rule_engine` MCP 工具
 - ✅ **Phase 5**：MCP Tool Schema/描述完善（5 工具全覆盖 + schema 断言）、长时生成进度上报与 `--max-voxels` 预算、端到端集成测试（`tests/test_integration_pipeline.py`）
-- ⬜ **Phase 6**（规划中）：`game` 命令组——读取 MC 版本文件夹日志定位崩溃原因（`game log` / `crash` / `diagnose`）、启动该版本做保活性验证（`game verify`）；规范见 [CLI.md](CLI.md) 3.8 与 prd.md
+- ✅ **Phase 6**：`game` 命令组——日志解析（`game log`）、崩溃报告解析（`game crash`）、综合归因（`game diagnose`）与版本保活验证（`game verify`，真实启动 + 存活标志 + 保活窗口）
+- ✅ **Phase 7**：`pack` 命令组（资源包/数据包/光影包/整合包）+ `world import`——pack.mcmeta/pack_format 校验、平台能力栅格（Modrinth project_type / CurseForge classId）、zip-slip 安全解包；统一入口 `mmffc.exe`（ASCII 立体字横幅 + `mmffc>` 交互提示符，支持管道驱动的 `--shell` 与 `--mcp`）
 
 > 注意：
 > 

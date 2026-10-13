@@ -56,6 +56,8 @@ mmffc rcon exec
 
 mmffc game diagnose
 
+mmffc pack install faithful --type resourcepack
+
 ```
 
 
@@ -381,7 +383,6 @@ Unix 风格默认非交互；mmffc shell 提供可选的 DOS 风格交互层，�
 3.8 mmffc game — 崩溃诊断与版本保活（Phase 6）
 
 
-
 非 MCP 部分：只读扫描游戏实例的日志与崩溃报告，输出结构化归因；通过真实（无头）启动验证版本保活性。绝不调用 LLM。
 
 ```bash
@@ -428,6 +429,62 @@ mmffc game verify ./server-1.20.1 --loader forge --keep 30 --probe --json | jq '
 cat logs/latest.log | rg -i --line-buffered "error|exception" | tail -20   # 用户侧快速手段
 ```
 
+
+
+
+3.9 mmffc pack - 资源包 / 数据包 / 光影包 / 整合包（Phase 7）
+
+
+
+非 MCP 部分：按内容类型搜索、下载、安装与校验。平台能力栅格（prd.md Phase 7）：
+
+· Modrinth：`project_type` facet 仅 `mod|modpack|resourcepack|shader`；`datapack` 走 `all_project_types:datapack`；无 world 类型。
+
+· CurseForge：classId 分类（6 模组 / 12 资源包 / 6552 光影包 / 17 世界 / 4471 整合包 / 6945 数据包），需 `CURSEFORGE_API_KEY`。
+
+```bash
+
+mmffc pack search <query> --type resourcepack|datapack|shaderpack|modpack \[--source modrinth|curseforge] \[--mc-version 1.20.1] \[--limit 20] \[--json]
+
+mmffc pack install <project> --type resourcepack|datapack|shaderpack|modpack \[--source ...] \[--mc-version ...] \[--version N] --game-dir <实例目录> \[--world 世界名] \[--dry-run] \[--yes] \[--json]
+
+mmffc pack list --game-dir <实例目录> \[--type ...] \[--json]
+
+mmffc pack validate <DIR> \[--type auto|resourcepack|datapack|shaderpack] \[--json]
+
+mmffc world import <FILE.zip|FILE.mcworld> \[--saves-dir DIR] \[--name 世界名] \[--dry-run] \[--yes] \[--json]
+```
+
+安装目标（确定性，见 prd.md）：资源包 → `<实例>/resourcepacks/`，光影包 → `<实例>/shaderpacks/`，数据包 → `<实例>/saves/<world>/datapacks/`（`--world` 省略时退回 `resourcepacks/`，与 CurseForge/Prism 的 Global Packs 兼容行为一致），世界存档 → `<saves-dir>/<name>/`。
+
+类型判定与校验（`pack validate`）：
+
+· 资源包：`pack.mcmeta` + `assets/<namespace>/…`（`pack_format` 必须为 15，即 1.20–1.20.1；不兼容退出码 3）。
+
+· 数据包：`pack.mcmeta` + `data/<namespace>/…`（同 pack_format 规则）。
+
+· 光影包：`shaders/program/` 下有 `*.vsh|*.fsh|*.gsh`（无官方 pack.mcmeta 规范，按结构存在性判定）。
+
+· 世界存档：`level.dat` + `region/`（导入后按 Phase 4 契约校验）。
+
+安全约束：zip 解包前先读中央目录列清单，拒绝 `../` 路径穿越、绝对路径、超过条目数/单条目/总量上限的条目（退出码 3）；导入目标已存在时报错不覆盖。
+
+退出码：2 用法（缺 `--type`/`--game-dir`）；3 数据/校验失败（类型不符、pack_format 不兼容、不安全条目）；4 平台网络错误；5/6 沿用全局语义。
+
+示例：
+
+```bash
+
+mmffc pack search faithful --type resourcepack --mc-version 1.20.1 --json | jq '.results[].slug'
+
+mmffc pack install faithful-32 --type resourcepack --game-dir ./instance --yes --json
+
+mmffc pack validate ./instance/resourcepacks/faithful --json | jq '.valid'
+
+mmffc pack install my-datapack --type datapack --game-dir ./instance --world test --yes --json
+
+mmffc world import ./downloads/AdventureMap.zip --saves-dir ./saves --yes --json
+```
 
 
 
@@ -570,6 +627,10 @@ RCON mcrcon / mcnexus
 ☐ game verify 绝不在用户实例上直接启动：独立临时 gameDir + 随机空闲端口，默认 --dry-run 先输出执行计划。
 
 ☐ game log / crash / diagnose 为只读操作，不修改实例目录内任何文件。
+
+☐ pack install / world import 的 zip 解包拒绝路径穿越、绝对路径与超限条目（zip-slip / zip 炸弹防护）。
+
+☐ pack install 对资源包/数据包校验 pack.mcmeta 的 pack_format 与目标版本（1.20.1 = 15）兼容。
 
 ☐ mmffc shell 可选，不影响管道自动化。
 

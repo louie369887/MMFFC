@@ -373,6 +373,42 @@ def _region_files(world_dir: Path) -> list[Path]:
     )
 
 
+@world.command("import")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False))
+@click.option("--saves-dir", "saves_dir", default="saves",
+              help="存档根目录（默认 ./saves）")
+@click.option("--name", "name", default=None, help="存档名（默认取文件名）")
+def world_import(ctx, archive, saves_dir, name):
+    """从 .zip / .mcworld 导入世界存档（防 zip-slip，导入后校验）。"""
+    settings: CliContext = ctx.obj
+    from mmffc.packs.archive import import_world
+
+    dest = Path(saves_dir).expanduser()
+    if settings.dry_run:
+        from mmffc.packs.archive import plan_archive
+
+        plan = plan_archive(Path(archive).expanduser())
+        settings.renderer.emit({
+            "ok": True,
+            "dry_run": True,
+            "plan": plan.to_dict(),
+        })
+        return
+
+    require_yes(settings.yes, f"world import {archive}")
+    result = import_world(Path(archive).expanduser(), dest, name=name)
+    payload = {
+        "ok": True,
+        "dry_run": False,
+        "archive": str(Path(archive).expanduser()),
+        "name": result["name"],
+        "world_dir": str(result["world_dir"]),
+        "saves_dir": str(dest),
+        "plan": result["plan"],
+    }
+    settings.renderer.emit(payload)
+
+
 @world.command("validate")
 @click.argument("dir", type=click.Path(file_okay=False))
 def world_validate(ctx, dir):

@@ -211,12 +211,14 @@ def _print_error(exc: MMFFCError) -> None:
 # register command groups (imported after the framework symbols above
 # to keep the import graph acyclic)
 # ----------------------------------------------------------------------
-from mmffc.cli import cache, config, mcp, mod, rcon, shell, structure, world  # noqa: E402
+from mmffc.cli import cache, config, game, mcp, mod, pack, rcon, shell, structure, world  # noqa: E402
 
 cli.add_command(mod.mod)
 cli.add_command(config.config)
 cli.add_command(structure.structure)
 cli.add_command(world.world)
+cli.add_command(pack.pack)
+cli.add_command(game.game)
 cli.add_command(rcon.rcon)
 cli.add_command(cache.cache)
 cli.add_command(shell.shell)

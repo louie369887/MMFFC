@@ -2,6 +2,8 @@
 
 **Minecraft Mod / FancyMenu / FTB / Control 自动化框架**
 
+> **状态：Alpha (0.1.0a1)** — 首个可安装测试版本。安装包仅通过 GitHub Releases 手动投递（见下文），源码安装可用 `pip install -e .`。
+
 MMFFC 采用「确定性底层管道 + AI 模糊逻辑大脑」双核架构：
 
 - **确定性 CLI（`mmffc`）**——从不调用 LLM：接收 stdin/文件输入，校验后原子落盘；输出默认人类可读，`--json` / `--ndjson` 供机器消费，可直接接入 `jq` / `grep` / `xargs` 管道。
@@ -20,7 +22,30 @@ MMFFC 采用「确定性底层管道 + AI 模糊逻辑大脑」双核架构：
 
 ## 安装
 
-要求 Python ≥ 3.11。
+要求 **Python ≥ 3.11**（安装包不捆绑解释器，安装前会检查）。
+
+### 方式一：安装包（推荐，Windows）
+
+`packge/output/MMFFC-0.1.0a1-alpha-setup.exe`（29 MB，由 GitHub Releases 手动投递）：
+
+```bat
+mmffc --version
+```
+
+安装过程与市面安装器一致：欢迎页 → **MIT 许可协议** → 选择安装目录 →
+组件与附加任务（开始菜单/桌面快捷方式、**添加到 PATH**、独立 exe、Python 依赖）→ 安装 → 完成。
+
+| 选项 | 默认 | 说明 |
+|---|---|---|
+| 安装目录 | `%ProgramFiles%\MMFFC` | 可改；无管理员权限时可用户级安装 |
+| 添加到 PATH | 开 | 安装目录 `bin\` 写入 PATH（管理安装写 HKLM，用户安装写 HKCU） |
+| 独立可执行文件 | 开 | `bin\mmffc.exe`（PyInstaller onefile，自包含依赖） |
+| Python 依赖 | 开 | `py -3 -m pip install -r requirements.txt`（离线失败仅告警） |
+| 桌面快捷方式 | 开 | 运行 `bin\mmffc.cmd`（源码模式） |
+
+安装后立即可用：`mmffc`、`mmffc --mcp`、`mmffc-mcp.cmd`。
+
+### 方式二：源码安装
 
 ```bash
 cd MMFFC
@@ -28,11 +53,11 @@ pip install -e ".[dev]"
 mmffc --version
 ```
 
-安装后提供两个入口：
+两个入口：
 
 | 入口 | 说明 |
 |---|---|
-| `mmffc` | 确定性 CLI |
+| `mmffc` | 统一入口：无参进交互 shell；带参执行 CLI；`--mcp` 启动 MCP |
 | `mmffc-mcp` | MCP Server（stdio） |
 
 ## 快速开始
@@ -113,7 +138,8 @@ mmffc world validate ./saves/test --json | jq '.valid'
 
 ### 统一入口 mmffc.exe（ASCII 立体字 + mmffc> 提示符）
 
-PyInstaller onefile 构建的 `dist/mmffc.exe` 是唯一入口，安装到 PATH 后即可在 cmd 直接使用：
+PyInstaller onefile 构建的 `dist/mmffc.exe` 是唯一入口（安装包内含该文件并写入 PATH），
+在 cmd 直接使用：
 
 ```bat
 mmffc                                  :: 无参数：ASCII 立体字横幅 + mmffc> 交互提示符
@@ -293,15 +319,42 @@ prd.md          # 产品需求文档（Phase 6 规划见其中）
 
 ```bash
 python -m pytest        # 561 个测试，全绿
-
-# 构建统一入口 exe（PyInstaller onefile，产物 dist/mmffc.exe）
-python -m PyInstaller --onefile --console --name mmffc --distpath dist \
-  --workpath build/pyi --specpath build --paths src \
-  --collect-submodules mmffc --collect-submodules mcp.server \
-  --collect-all pydantic --collect-all pydantic_core \
-  --collect-all jsonschema --exclude-module mcp.cli \
-  src/mmffc/launcher.py
 ```
+
+### 构建安装包（packge/，不入库）
+
+`packge/` 是本地安装包工作目录，**已被 `.gitignore` 忽略**（不随 push 上传），
+安装包仅**手动投递 GitHub Releases**：
+
+```bat
+packge\build.bat                 :: 完整构建（PyInstaller exe → stage → setup.exe）
+packge\build.bat -SkipExe        :: 复用 dist\mmffc.exe
+packge\build.bat -Clean          :: 清理 packge\ 与 PyInstaller 缓存
+```
+
+权威脚本在 `tools/installer/`（入库）：`mmffc.iss`（Inno Setup 脚本，
+含简体中文语言文件）、`build.ps1`。产物：
+
+| 路径 | 说明 |
+|---|---|
+| `packge/output/MMFFC-<版本>-alpha-setup.exe` | 安装包本体（~29 MB） |
+| `packge/stage/` | 随附源码 + `requirements.txt` + `bin/` 启动包装 + 文档 |
+| `packge/mmffc.iss` | 生效的安装脚本副本 |
+
+依赖：Python 3.11+、PyInstaller、Inno Setup 6。安装包行为：安装前检查
+Python ≥ 3.11（不捆绑解释器）→ MIT 许可协议 → 组件/任务选择 → 安装依赖 →
+写 PATH → 完成页；卸载时移除文件与 PATH 条目。
+
+```bash
+# 手动投递
+gh release create v0.1.0a1 "packge/output/MMFFC-0.1.0a1-alpha-setup.exe" \
+  --title "MMFFC 0.1.0a1 (alpha)" --notes "首个 Alpha 安装包"
+```
+
+### 目录约定
+
+`packge/`、`dist/`、`build/`、`prd.md`（规划文档）均不入库；
+`tools/installer/` 是安装器的唯一权威来源。
 
 ## 路线图
 
@@ -312,6 +365,9 @@ python -m PyInstaller --onefile --console --name mmffc --distpath dist \
 - ✅ **Phase 5**：MCP Tool Schema/描述完善（5 工具全覆盖 + schema 断言）、长时生成进度上报与 `--max-voxels` 预算、端到端集成测试（`tests/test_integration_pipeline.py`）
 - ✅ **Phase 6**：`game` 命令组——日志解析（`game log`）、崩溃报告解析（`game crash`）、综合归因（`game diagnose`）与版本保活验证（`game verify`，真实启动 + 存活标志 + 保活窗口）
 - ✅ **Phase 7**：`pack` 命令组（资源包/数据包/光影包/整合包）+ `world import`——pack.mcmeta/pack_format 校验、平台能力栅格（Modrinth project_type / CurseForge classId）、zip-slip 安全解包；统一入口 `mmffc.exe`（ASCII 立体字横幅 + `mmffc>` 交互提示符，支持管道驱动的 `--shell` 与 `--mcp`）
+- ✅ **Alpha 0.1.0a1**：Windows 安装包（`packge/`，Inno Setup + PyInstaller）——MIT 协议、安装前 Python ≥ 3.11 检查、PATH、依赖安装、卸载清理；`mmffc` 版本号进入 Alpha 通道
+
+> 下一个里程碑 `0.2.0`（Beta）目标：`rcon watch`/`cache` 打磨、安装包签名与自动更新检查、MCP Tasks 扩展（待上游 SDK 支持）。
 
 > 注意：
 > 

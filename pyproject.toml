@@ -1,6 +1,6 @@
 [project]
 name = "mmffc"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "MMFFC - Minecraft Mod / FancyMenu / FTB / Control automation framework"
 requires-python = ">=3.11"
 dependencies = [
